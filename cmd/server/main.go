@@ -49,11 +49,17 @@ func main() {
 		glog.Fatalf("Must have rkt installed: %v", err)
 	}
 
-	cli := cli.NewRktCLI(rktPath, execer, cli.CLIConfig{})
+	systemdRunPath, err := execer.LookPath("systemd-run")
+	if err != nil {
+		glog.Fatalf("Must have rkt installed: %v", err)
+	}
+
+	cli, init := cli.NewRktCLI(rktPath, execer, cli.CLIConfig{}), cli.NewSystemd(systemdRunPath, execer)
+
 	grpcServer := grpc.NewServer()
 
 	runtimeApi.RegisterImageServiceServer(grpcServer, image.NewImageStore(image.ImageStoreConfig{CLI: cli}))
-	runtimeApi.RegisterRuntimeServiceServer(grpcServer, runtime.New(cli))
+	runtimeApi.RegisterRuntimeServiceServer(grpcServer, runtime.New(cli, init))
 
 	glog.Infof("Starting to serve on %q", socketPath)
 	err = grpcServer.Serve(sock)
