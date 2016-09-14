@@ -42,7 +42,7 @@ func makeSandboxConfig(name, namespace, uid string, attempt uint32) *runtimeApi.
 // TestListSandboxes creates several sandboxes and then list them to check
 // whether the correct metadatas, states, and labels are returned.
 func TestListSandboxes(t *testing.T) {
-	ds, _ := newTestDockerSevice()
+	ds, _, _ := newTestDockerSevice()
 	name, namespace := "foo", "bar"
 	configs := []*runtimeApi.PodSandboxConfig{}
 	for i := 0; i < 3; i++ {
@@ -76,8 +76,7 @@ func TestListSandboxes(t *testing.T) {
 // TestSandboxStatus tests the basic lifecycle operations and verify that
 // the status returned reflects the operations performed.
 func TestSandboxStatus(t *testing.T) {
-	ds, fakeDocker := newTestDockerSevice()
-	fClock := fakeDocker.Clock
+	ds, _, fClock := newTestDockerSevice()
 	config := makeSandboxConfig("foo", "bar", "1", 0)
 
 	// TODO: The following variables depend on the internal

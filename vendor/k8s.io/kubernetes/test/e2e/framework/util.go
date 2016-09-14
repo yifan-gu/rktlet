@@ -56,6 +56,7 @@ import (
 	"k8s.io/kubernetes/pkg/client/typed/discovery"
 	"k8s.io/kubernetes/pkg/client/typed/dynamic"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
+	clientsetadapter "k8s.io/kubernetes/pkg/client/unversioned/adapters/internalclientset"
 	"k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
 	clientcmdapi "k8s.io/kubernetes/pkg/client/unversioned/clientcmd/api"
 	gcecloud "k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
@@ -1755,6 +1756,16 @@ func ServerVersionGTE(v semver.Version, c discovery.ServerVersionInterface) (boo
 	return sv.GTE(v), nil
 }
 
+func SkipUnlessKubectlVersionGTE(v semver.Version) {
+	gte, err := KubectlVersionGTE(v)
+	if err != nil {
+		Failf("Failed to get kubectl version: %v", err)
+	}
+	if !gte {
+		Skipf("Not supported for kubectl versions before %q", v)
+	}
+}
+
 // KubectlVersionGTE returns true if the kubectl version is greater than or
 // equal to v.
 func KubectlVersionGTE(v semver.Version) (bool, error) {
@@ -2158,20 +2169,18 @@ func (b kubectlBuilder) WithStdinReader(reader io.Reader) *kubectlBuilder {
 	return &b
 }
 
-func (b kubectlBuilder) ExecOrDie() string {
-	str, err := b.Exec()
-	Logf("stdout: %q", str)
+func (b kubectlBuilder) ExecOrDie() (string, string) {
+	stdout, stderr, err := b.Exec()
 	// In case of i/o timeout error, try talking to the apiserver again after 2s before dying.
 	// Note that we're still dying after retrying so that we can get visibility to triage it further.
 	if isTimeout(err) {
 		Logf("Hit i/o timeout error, talking to the server 2s later to see if it's temporary.")
 		time.Sleep(2 * time.Second)
-		retryStr, retryErr := RunKubectl("version")
-		Logf("stdout: %q", retryStr)
+		_, retryErr := RunKubectl("version")
 		Logf("err: %v", retryErr)
 	}
 	Expect(err).NotTo(HaveOccurred())
-	return str
+	return stdout, stderr
 }
 
 func isTimeout(err error) bool {
@@ -2188,14 +2197,14 @@ func isTimeout(err error) bool {
 	return false
 }
 
-func (b kubectlBuilder) Exec() (string, error) {
+func (b kubectlBuilder) Exec() (string, string, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := b.cmd
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 
 	Logf("Running '%s %s'", cmd.Path, strings.Join(cmd.Args[1:], " ")) // skip arg[0] as it is printed separately
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("error starting %v:\nCommand stdout:\n%v\nstderr:\n%v\nerror:\n%v\n", cmd, cmd.Stdout, cmd.Stderr, err)
+		return "", "", fmt.Errorf("error starting %v:\nCommand stdout:\n%v\nstderr:\n%v\nerror:\n%v\n", cmd, cmd.Stdout, cmd.Stderr, err)
 	}
 	errCh := make(chan error, 1)
 	go func() {
@@ -2209,32 +2218,39 @@ func (b kubectlBuilder) Exec() (string, error) {
 				Logf("rc: %d", rc)
 				rc = int(ee.Sys().(syscall.WaitStatus).ExitStatus())
 			}
-			return "", uexec.CodeExitError{
+			return "", "", uexec.CodeExitError{
 				Err:  fmt.Errorf("error running %v:\nCommand stdout:\n%v\nstderr:\n%v\nerror:\n%v\n", cmd, cmd.Stdout, cmd.Stderr, err),
 				Code: rc,
 			}
 		}
 	case <-b.timeout:
 		b.cmd.Process.Kill()
-		return "", fmt.Errorf("timed out waiting for command %v:\nCommand stdout:\n%v\nstderr:\n%v\n", cmd, cmd.Stdout, cmd.Stderr)
+		return "", "", fmt.Errorf("timed out waiting for command %v:\nCommand stdout:\n%v\nstderr:\n%v\n", cmd, cmd.Stdout, cmd.Stderr)
 	}
-	Logf("stderr: %q", stderr.String())
-	return stdout.String(), nil
+
+	stderrString := stderr.String()
+	stdoutString := stdout.String()
+	Logf("stderr: %q", stderrString)
+	Logf("stdout: %q", stdoutString)
+	return stdoutString, stderrString, nil
 }
 
 // RunKubectlOrDie is a convenience wrapper over kubectlBuilder
 func RunKubectlOrDie(args ...string) string {
-	return NewKubectlCommand(args...).ExecOrDie()
+	stdout, _ := NewKubectlCommand(args...).ExecOrDie()
+	return stdout
 }
 
 // RunKubectl is a convenience wrapper over kubectlBuilder
 func RunKubectl(args ...string) (string, error) {
-	return NewKubectlCommand(args...).Exec()
+	stdout, _, err := NewKubectlCommand(args...).Exec()
+	return stdout, err
 }
 
 // RunKubectlOrDieInput is a convenience wrapper over kubectlBuilder that takes input to stdin
 func RunKubectlOrDieInput(data string, args ...string) string {
-	return NewKubectlCommand(args...).WithStdinData(data).ExecOrDie()
+	stdout, _ := NewKubectlCommand(args...).WithStdinData(data).ExecOrDie()
+	return stdout
 }
 
 func StartCmdAndStreamOutput(cmd *exec.Cmd) (stdout, stderr io.ReadCloser, err error) {
@@ -3197,7 +3213,7 @@ func RemoveTaintOffNode(c *client.Client, nodeName string, taint api.Taint) {
 
 func ScaleRC(c *client.Client, ns, name string, size uint, wait bool) error {
 	By(fmt.Sprintf("Scaling replication controller %s in namespace %s to %d", name, ns, size))
-	scaler, err := kubectl.ScalerFor(api.Kind("ReplicationController"), c)
+	scaler, err := kubectl.ScalerFor(api.Kind("ReplicationController"), clientsetadapter.FromUnversionedClient(c))
 	if err != nil {
 		return err
 	}
@@ -3314,7 +3330,7 @@ func DeleteRCAndPods(c *client.Client, ns, name string) error {
 		}
 		return err
 	}
-	reaper, err := kubectl.ReaperForReplicationController(c, 10*time.Minute)
+	reaper, err := kubectl.ReaperForReplicationController(clientsetadapter.FromUnversionedClient(c).Core(), 10*time.Minute)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
 			Logf("RC %s was already deleted: %v", name, err)
@@ -3462,7 +3478,7 @@ func DeleteReplicaSet(c *client.Client, ns, name string) error {
 		}
 		return err
 	}
-	reaper, err := kubectl.ReaperFor(extensions.Kind("ReplicaSet"), c)
+	reaper, err := kubectl.ReaperFor(extensions.Kind("ReplicaSet"), clientsetadapter.FromUnversionedClient(c))
 	if err != nil {
 		if apierrs.IsNotFound(err) {
 			Logf("ReplicaSet %s was already deleted: %v", name, err)
@@ -4097,6 +4113,12 @@ func GetSigner(provider string) (ssh.Signer, error) {
 		}
 		// Otherwise revert to home dir
 		keyfile = "kube_aws_rsa"
+	case "vagrant":
+		keyfile := os.Getenv("VAGRANT_SSH_KEY")
+		if len(keyfile) != 0 {
+			return sshutil.MakePrivateKeySignerFromFile(keyfile)
+		}
+		return nil, fmt.Errorf("VAGRANT_SSH_KEY env variable should be provided")
 	default:
 		return nil, fmt.Errorf("GetSigner(...) not implemented for %s", provider)
 	}

@@ -1,5 +1,5 @@
-hash: 6bb891d7123848693643ca69ef7483260d68236e4a1b43675e44d91097a3c66b
-updated: 2016-09-12T17:02:17.095558251-07:00
+hash: 16628724a9874142b13202f72a5685d44121a32d55015f4cda13df2db1d17871
+updated: 2016-09-14T15:35:24.020043366-07:00
 imports:
 - name: github.com/davecgh/go-spew
   version: 5215b55f46b2b919f50a1df0eaa5886afe4e3b3d
@@ -46,7 +46,7 @@ imports:
 - name: github.com/stretchr/objx
   version: 1a9d0bb9f541897e62256577b352fdbc1fb4fd94
 - name: github.com/stretchr/testify
-  version: e3a8ff8ce36581f87a15341206f205b1da467059
+  version: f390dcf405f7b83c997eac1b06768bb9f44dec18
   subpackages:
   - assert
   - mock
@@ -58,16 +58,17 @@ imports:
   - cmd/mockery
   - mockery
 - name: golang.org/x/net
-  version: e90d6d0afc4c315a0d87a568ae68577cc15149a0
+  version: de35ec43e7a9aabd6a9c54d2898220ea7e44de7d
   subpackages:
   - context
   - http2
   - trace
   - http2/hpack
+  - idna
   - lex/httplex
   - internal/timeseries
 - name: golang.org/x/tools
-  version: 86ad1193da6aba71355e71191641b9cfb26daa67
+  version: f1a397bba50dee815e8c73f3ec94ffc0e8df1a09
   subpackages:
   - go/loader
   - imports
@@ -85,7 +86,7 @@ imports:
   - transport
   - peer
 - name: k8s.io/kubernetes
-  version: 71af33120a4dd3fe8d1109a343e44e07f8eafade
+  version: fa943089125df49667bb2c09b688ae6af5275686
   subpackages:
   - pkg/kubelet/api/v1alpha1/runtime
   - pkg/kubelet/container
