@@ -28,9 +28,18 @@ import (
 )
 
 const (
-	kubernetesLabelKeyPrefix           = "k8s.io/label/"
-	kubernetesAnnotationKeyPrefix      = "k8s.io/annotation/"
+	// Exists both app-level and pod-level.
+	kubernetesLabelKeyPrefix      = "k8s.io/label/"
+	kubernetesAnnotationKeyPrefix = "k8s.io/annotation/"
+
+	// Exists per app.
 	kubernetesReservedAnnoImageNameKey = "k8s.io/reserved/image-name"
+
+	// Exists per pod.
+	kubernetesReservedAnnoPodUid       = "k8s.io/reserved/pod-uid"
+	kubernetesReservedAnnoPodName      = "k8s.io/reserved/pod-name"
+	kubernetesReservedAnnoPodNamespace = "k8s.io/reserved/pod-namespace"
+	kubernetesReservedAnnoPodAttempt   = "k8s.io/reserved/pod-attempt"
 )
 
 // parseContainerID parses the container ID string into "uuid" + "appname".
@@ -155,7 +164,9 @@ type Pod struct {
 	State    string            `json:"state"`
 	Networks []netinfo.NetInfo `json:"networks,omitempty"`
 	// TODO(yifan): Decide if we want to include detailed app info.
-	AppNames []string `json:"app_names,omitempty"`
+	AppNames    []string          `json:"app_names,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+	StartedAt   *int64            `json:"started_at,omitempty"`
 }
 
 func generateAppAddCommand(req *runtimeApi.CreateContainerRequest, imageID string) []string {
@@ -178,4 +189,109 @@ func generateAppAddCommand(req *runtimeApi.CreateContainerRequest, imageID strin
 		cmd = append(cmd, "--set-annotation="+anno)
 	}
 	return cmd
+}
+
+func generateAppSandboxCommand(req *runtimeApi.RunPodSandboxRequest, uuidfile string) []string {
+	// Generate annotations.
+	var annotations []string
+	for k, v := range req.Config.Labels {
+		annotations = append(annotations, fmt.Sprintf("%s%s=%s", kubernetesLabelKeyPrefix, k, v))
+	}
+	for k, v := range req.Config.Annotations {
+		annotations = append(annotations, fmt.Sprintf("%s%s=%s", kubernetesAnnotationKeyPrefix, k, v))
+	}
+
+	// Reserved annotations.
+	annotations = append(annotations, fmt.Sprintf("%s=%s", kubernetesReservedAnnoPodUid, *req.Config.Metadata.Uid))
+	annotations = append(annotations, fmt.Sprintf("%s=%s", kubernetesReservedAnnoPodName, *req.Config.Metadata.Name))
+	annotations = append(annotations, fmt.Sprintf("%s=%s", kubernetesReservedAnnoPodNamespace, *req.Config.Metadata.Namespace))
+	annotations = append(annotations, fmt.Sprintf("%s=%d", kubernetesReservedAnnoPodAttempt, *req.Config.Metadata.Attempt))
+
+	cmd := []string{"app", "sandbox", "--uuid-file-save=" + uuidfile}
+	for _, anno := range annotations {
+		cmd = append(cmd, "--set-annotation="+anno)
+	}
+	return cmd
+}
+
+func getKubernetesMetatdata(annotations map[string]string) (*runtimeApi.PodSandboxMetadata, error) {
+	podUid := annotations[kubernetesReservedAnnoPodUid]
+	podName := annotations[kubernetesReservedAnnoPodName]
+	podNamespace := annotations[kubernetesReservedAnnoPodNamespace]
+	podAttemptStr := annotations[kubernetesReservedAnnoPodAttempt]
+
+	attempt, err := strconv.ParseUint(podAttemptStr, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing attempt count %q: %v", podAttemptStr, err)
+	}
+	podAttempt := uint32(attempt)
+
+	return &runtimeApi.PodSandboxMetadata{
+		Uid:       &podUid,
+		Name:      &podName,
+		Namespace: &podNamespace,
+		Attempt:   &podAttempt,
+	}, nil
+}
+
+func toPodSandboxStatus(pod *Pod) (*runtimeApi.PodSandboxStatus, error) {
+	metadata, err := getKubernetesMetatdata(pod.Annotations)
+	if err != nil {
+		return nil, err
+	}
+
+	var startedAt int64
+	if pod.StartedAt != nil {
+		startedAt = *pod.StartedAt
+	}
+
+	state := runtimeApi.PodSandBoxState_NOTREADY
+	if pod.State == "running" {
+		state = runtimeApi.PodSandBoxState_READY
+	}
+
+	ip := getIP(pod.Networks)
+
+	return &runtimeApi.PodSandboxStatus{
+		Id:          &pod.UUID,
+		Metadata:    metadata,
+		State:       &state,
+		CreatedAt:   &startedAt,
+		Network:     &runtimeApi.PodSandboxNetworkStatus{Ip: &ip},
+		Linux:       nil, // TODO
+		Labels:      getKubernetesLabels(pod.Annotations),
+		Annotations: getKubernetesAnnotations(pod.Annotations),
+	}, nil
+}
+
+// getIP returns the ip of the pod.
+// The ip of a network named rkt.kubernetes.io will be preferred, followed by
+// default, followed by the first one
+// The input might look something like 'default:ip4=172.16.28.27,foo:ip4=x.y.z.a'
+func getIP(networks []netinfo.NetInfo) string {
+	var foundIP string
+	for _, network := range networks {
+
+		// Always prefer this network if available.
+		// We're done if we find it
+		if network.NetName == "rkt.kubernetes.io" {
+			return network.IP.To4().String()
+		}
+
+		// Even if we already have a previous ip,
+		// prefer default over it.
+		// If it was rkt.kubernetes.io, we already returned,
+		// so it must have been an arbitrary one.
+		if network.NetName == "default" {
+			foundIP = network.IP.To4().String()
+		}
+
+		// If nothing else has matched, we can use this one,
+		// but keep going to see if we find 'default' or
+		// 'rkt.kubernetes.io'.
+		if foundIP == "" {
+			foundIP = network.IP.To4().String()
+		}
+	}
+	return foundIP
 }
