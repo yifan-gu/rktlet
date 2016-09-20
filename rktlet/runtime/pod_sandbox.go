@@ -71,6 +71,16 @@ func (r *RktRuntime) RunPodSandbox(ctx context.Context, req *runtimeApi.RunPodSa
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	for i := 0; i < 100; i++ {
+		// Read pod manifest to make sure pod is running.
+		_, err := r.PodSandboxStatus(ctx, &runtimeApi.PodSandboxStatusRequest{PodSandboxId: &rktUUID})
+		if err == nil {
+			rktUUID = ""
+			break
+		}
+		time.Sleep(100 * time.Microsecond)
+	}
+
 	if rktUUID == "" {
 		return nil, fmt.Errorf("waited 10s for pod sandbox to start, but it didn't: %v", k8sPodUid)
 	}
