@@ -141,7 +141,7 @@ func (r *RktRuntime) StopContainer(ctx context.Context, req *runtimeApi.StopCont
 
 func (r *RktRuntime) ListContainers(ctx context.Context, req *runtimeApi.ListContainersRequest) (*runtimeApi.ListContainersResponse, error) {
 	// We assume the containers in data dir are all managed by kubelet.
-	resp, err := r.RunCommand("list", "--full=true", "--no-legend=true", "--format=json")
+	resp, err := r.RunCommand("list", "--format=json")
 	if err != nil {
 		return nil, err
 	}

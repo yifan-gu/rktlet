@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strings"
 	"time"
 
 	context "golang.org/x/net/context"
@@ -88,23 +87,17 @@ func (r *RktRuntime) RunPodSandbox(ctx context.Context, req *runtimeApi.RunPodSa
 	}
 
 	if readyUUID == "" {
-		return nil, fmt.Errorf("waited 10s for pod sandbox to start, but it didn't: %v", k8sPodUid)
+		return nil, fmt.Errorf("waited 10s for pod sandbox to ready, but it didn't: %q", k8sPodUid)
 	}
 
-	return &runtimeApi.RunPodSandboxResponse{
-		PodSandboxId: &rktUUID,
-	}, nil
+	return &runtimeApi.RunPodSandboxResponse{PodSandboxId: &rktUUID}, nil
 }
 
 func (r *RktRuntime) StopPodSandbox(ctx context.Context, req *runtimeApi.StopPodSandboxRequest) (*runtimeApi.StopPodSandboxResponse, error) {
-	respLines, err := r.RunCommand("stop", req.GetPodSandboxId())
-	// TODO, structured output will be so much nicer!
-	for _, line := range respLines {
-		if strings.HasSuffix(line, "is not running") {
-			return &runtimeApi.StopPodSandboxResponse{}, nil
-		}
+	if _, err := r.RunCommand("stop", req.GetPodSandboxId()); err != nil {
+		return nil, err
 	}
-	return nil, err
+	return &runtimeApi.StopPodSandboxResponse{}, nil
 }
 
 func (r *RktRuntime) RemovePodSandbox(ctx context.Context, req *runtimeApi.RemovePodSandboxRequest) (*runtimeApi.RemovePodSandboxResponse, error) {
