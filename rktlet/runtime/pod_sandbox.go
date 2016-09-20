@@ -77,6 +77,20 @@ func (r *RktRuntime) RunPodSandbox(ctx context.Context, req *runtimeApi.RunPodSa
 		return nil, fmt.Errorf("waited 10s for pod sandbox to start, but it didn't: %v", k8sPodUid)
 	}
 
+	var readyUUID string
+	for i := 0; i < 100; i++ {
+		_, err := r.PodSandboxStatus(ctx, &runtimeApi.PodSandboxStatusRequest{PodSandboxId: &rktUUID})
+		if err == nil {
+			readyUUID = rktUUID
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if readyUUID == "" {
+		return nil, fmt.Errorf("waited 10s for pod sandbox to start, but it didn't: %v", k8sPodUid)
+	}
+
 	return &runtimeApi.RunPodSandboxResponse{
 		PodSandboxId: &rktUUID,
 	}, nil
