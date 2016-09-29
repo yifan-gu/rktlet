@@ -314,6 +314,20 @@ func generateAppSandboxCommand(req *runtimeApi.RunPodSandboxRequest, uuidfile st
 		// https://github.com/kubernetes/kubernetes/pull/33709 is merged.
 	}
 
+	// Add port mappings only if it's not hostnetwork.
+	linuxNamespaces := getLinuxNamespaces(req)
+	if linuxNamespaces != nil && !linuxNamespaces.GetHostNetwork() {
+		for _, portMapping := range req.Config.PortMappings {
+			if portMapping.GetHostPort() == 0 {
+				// If no host port is specified, then ignore.
+				// TODO(yifan): Do this check in kubelet.
+				continue
+			}
+			portArg := generatePortArgs(portMapping)
+			cmd = append(cmd, portArg)
+		}
+	}
+
 	// Generate annotations.
 	var labels, annotations []string
 	for k, v := range req.Config.Labels {
@@ -449,4 +463,33 @@ func cpuSharesToMilliCores(cpushare int64) int64 {
 
 func cpuQuotaToMilliCores(cpuQuota, cpuPeriod int64) int64 {
 	return cpuQuota * 1000 / cpuPeriod
+}
+
+func getLinuxNamespaces(req *runtimeApi.RunPodSandboxRequest) *runtimeApi.NamespaceOption {
+	if req == nil {
+		return nil
+	}
+	if req.Config == nil {
+		return nil
+	}
+	if req.Config.Linux == nil {
+		return nil
+	}
+	return req.Config.Linux.NamespaceOptions
+}
+
+// generatePortArgs returns the `--port` argument derived from the port mapping.
+func generatePortArgs(port *runtimeApi.PortMapping) string {
+	protocol := strings.ToLower(port.Protocol.String())
+	containerPort := port.GetContainerPort()
+	hostPort := port.GetHostPort()
+	hostIP := port.GetHostIp()
+	if hostIP == "" {
+		hostIP = "0.0.0.0"
+	}
+	// The name is in the format of "protocol-containerPort-hostPort",
+	// e.g. "tcp-80-8080", which satisfies the ACName format.
+	name := fmt.Sprintf("%s-%d-%d", protocol, containerPort, hostPort)
+
+	return fmt.Sprintf("--port=%s:%s:%d:%s:%d", name, protocol, containerPort, hostIP, hostPort)
 }
