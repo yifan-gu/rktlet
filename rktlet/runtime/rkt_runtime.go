@@ -178,9 +178,11 @@ func (r *RktRuntime) ListContainers(ctx context.Context, req *runtimeApi.ListCon
 				Annotations: resp.Status.Annotations,
 			}
 
-			if passFilter(container, req.Filter) {
-				containers = append(containers, container)
-			}
+			containers = append(containers, container)
+
+			//if passFilter(container, req.Filter) {
+			//
+			//}
 		}
 	}
 

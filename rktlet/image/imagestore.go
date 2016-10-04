@@ -122,9 +122,11 @@ func (s *ImageStore) ListImages(ctx context.Context, req *runtime.ListImagesRequ
 			Size_:       &size,
 		}
 
-		if passFilter(image, req.Filter) {
-			images = append(images, image)
-		}
+		images = append(images, image)
+
+		//if passFilter(image, req.Filter) {
+		//
+		//}
 	}
 
 	return &runtime.ListImagesResponse{Images: images}, nil
